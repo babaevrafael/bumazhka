@@ -18,7 +18,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #141312;
     --fg: #f2eee7;
     --muted: #a29b8f;
@@ -29,9 +29,25 @@
     --note: #f0d148;
     --note-fg: #262000;
     --note-hidden: #2c2a26;
+    --turn: #7d97ff;
     --shadow: none;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #141312;
+    --fg: #f2eee7;
+    --muted: #a29b8f;
+    --card: #1f1d1b;
+    --line: #34312c;
+    --primary: #6f8dff;
+    --primary-fg: #0d1020;
+    --note: #f0d148;
+    --note-fg: #262000;
+    --note-hidden: #2c2a26;
+    --turn: #7d97ff;
+    --shadow: none;
+    color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -191,3 +207,27 @@ details ol { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction
   opacity: 0; pointer-events: none; transition: .2s; max-width: calc(100% - 32px); text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* theme toggle */
+.theme-btn { padding: 6px 10px; font-size: 16px; line-height: 1; }
+.start-tools { display: flex; justify-content: flex-end; }
+
+/* turn bar: всегда на виду */
+#app > div[data-key="turn"] { position: sticky; top: 8px; z-index: 5; }
+.turncard { border-width: 2px; border-color: var(--turn); }
+.turncard .who { font-size: 18px; }
+.turncard.mine { background: #2f5bff; color: #fff; border-color: transparent; box-shadow: 0 8px 24px rgba(47,91,255,.35); }
+.turncard.mine .who { font-size: 21px; font-weight: 750; }
+.turncard.mine .hint { color: rgba(255,255,255,.85); font-size: 14px; }
+button.pass {
+  width: 100%;
+  padding: 15px 18px;
+  font-size: 18px;
+  font-weight: 750;
+  background: var(--note);
+  color: var(--note-fg);
+  border: none;
+  box-shadow: 0 4px 0 rgba(0,0,0,.25);
+}
+button.pass:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,.25); }
+button.pass-host { width: 100%; padding: 12px; font-weight: 650; border: 2px solid var(--turn); color: var(--turn); background: transparent; }

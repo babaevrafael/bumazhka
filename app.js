@@ -409,8 +409,32 @@
     publish('turn', { round: gstate().round, pid: null });
   }
 
+  // ---------- theme ----------
+  const THEMES = { auto: ['🌗', 'Тема: как в системе'], dark: ['🌙', 'Тема: тёмная'], light: ['☀️', 'Тема: светлая'] };
+  const getTheme = () => { const t = ls.get('bmzk:theme', 'auto'); return THEMES[t] ? t : 'auto'; };
+  function applyTheme() {
+    const t = getTheme();
+    if (t === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+    const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = dark ? '#141312' : '#ffd84d';
+  }
+  function cycleTheme() {
+    const order = ['auto', 'dark', 'light'];
+    const next = order[(order.indexOf(getTheme()) + 1) % order.length];
+    ls.set('bmzk:theme', next);
+    applyTheme();
+    toast(THEMES[next][1]);
+    render();
+  }
+  const themeBtn = () => `<button class="ghost theme-btn" data-act="theme" title="${THEMES[getTheme()][1]}" aria-label="${THEMES[getTheme()][1]}">${THEMES[getTheme()][0]}</button>`;
+  applyTheme();
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch {}
+
   const actions = {
-    tab: (el) => { ui.tab = el.dataset.tab; ui.error = ''; render(); },
+    theme: cycleTheme,
+    tab:(el) => { ui.tab = el.dataset.tab; ui.error = ''; render(); },
     go: submitStart,
     share: shareInvite,
     leave: leaveRoom,
@@ -439,7 +463,8 @@
   function viewStart() {
     const join = ui.tab === 'join';
     return [['start', `
-      <div class="hero">
+      <div class="start-tools">${themeBtn()}</div>
+      <div class="hero" style="padding-top:4px">
         <div class="logo-note">Кто я?</div>
         <h1>Бумажка</h1>
         <p class="muted">Каждому «приклеивают» слово. Все видят чужие слова, кроме своего. Задавай вопросы «да / нет» и угадай, кто ты.</p>
@@ -470,6 +495,7 @@
         <button class="code-btn" data-act="share" title="Пригласить">Лобби <b>${esc(session.code)}</b> <span>🔗</span></button>
         <span class="grow"></span>
         <span class="net"><span class="dot ${live ? 'on' : 'off'}"></span>${live ? 'онлайн' : 'нет связи…'}</span>
+        ${themeBtn()}
         <button class="ghost small" data-act="leave">Выйти</button>
       </div>`];
   }
@@ -600,13 +626,18 @@
     }
     const t = turnPid();
     const tp = t && pById(t);
-    const canPass = t === me() || amHost();
+    if (tp && t === me()) {
+      return ['turn', `
+        <section class="card turncard mine">
+          <div class="who">🎤 Твой ход!</div>
+          <p class="hint">Задавай вопросы. Ответили «нет» — передавай ход.</p>
+          <button class="pass" data-act="pass">Передать ход →</button>
+        </section>`];
+    }
     return ['turn', `
-      <section class="card">
-        <div class="turnbar">
-          <div class="who">${tp ? `🎤 Спрашивает: <b>${esc(tp.name)}</b>${t === me() ? ' — это ты!' : ''}` : '🎤 Очередь ещё не назначена'}</div>
-          ${canPass ? `<button class="small" data-act="pass">${tp ? 'Передать ход →' : 'Назначить ход'}</button>` : ''}
-        </div>
+      <section class="card turncard">
+        <div class="who">${tp ? `🎤 Спрашивает: <b>${esc(tp.name)}</b>` : '🎤 Очередь ещё не назначена'}</div>
+        ${amHost() ? `<button class="pass-host" data-act="pass">${tp ? `Передать ход за ${esc(tp.name)} →` : 'Назначить ход'}</button>` : ''}
       </section>`];
   }
 
