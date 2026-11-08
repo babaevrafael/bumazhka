@@ -231,3 +231,6 @@ button.pass {
 }
 button.pass:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,.25); }
 button.pass-host { width: 100%; padding: 12px; font-weight: 650; border: 2px solid var(--turn); color: var(--turn); background: transparent; }
+
+.dupwarn { color: var(--warn); font-weight: 650; font-size: 13px; margin-top: 2px; }
+.task .dupwarn, section .dupwarn { font-size: 15px; }

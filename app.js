@@ -43,7 +43,7 @@
   let conn = null;
   let store = {};
   const drafts = {};
-  const ui = { screen: 'start', tab: 'create', error: '', busy: false, editingWord: false, filling: null };
+  const ui = { screen: 'start', tab: 'create', error: '', busy: false, editingWord: false, filling: null, wordError: '' };
   let timers = [];
   let lastTurn = null;
 
@@ -240,6 +240,49 @@
   }
   function inPlay(pid) { return !!wordFor(pid) && !statusOf(pid); }
 
+  // ---------- дубликаты ----------
+  // Сравниваем без регистра, ё/е, пробелов и знаков: «Гарри Поттер» = «гарри-поттер».
+  function normWord(w) { return String(w || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ''); }
+
+  // У кого из ВИДИМЫХ мне игроков уже есть такое слово. Со своим (скрытым) словом
+  // не сравниваем: иначе «занято» подсказало бы игроку, кто он.
+  function visibleDup(word, exceptPid) {
+    const n = normWord(word);
+    if (!n) return null;
+    for (const p of players()) {
+      if (p.id === me() || p.id === exceptPid) continue;
+      const w = wordFor(p.id);
+      if (w && normWord(w.word) === n) return p.id;
+    }
+    return null;
+  }
+
+  // Совпадения, которые проскочили (одновременная отправка или совпало со скрытым
+  // словом загадывающего). Показываем только тем, кто видит оба слова, — то есть
+  // не самим «близнецам». fix — чьё слово предлагаем поменять: последнее загаданное,
+  // причём таким человеком, который сам видит оба слова.
+  function dupGroups() {
+    const groups = {};
+    for (const p of players()) {
+      const w = wordFor(p.id);
+      if (w) (groups[normWord(w.word)] = groups[normWord(w.word)] || []).push(p.id);
+    }
+    const out = [];
+    for (const ids of Object.values(groups)) {
+      if (ids.length < 2) continue;
+      const seen = ids.filter((id) => id !== me());
+      if (seen.length < 2) continue; // одно из слов — моё: молчим, чтобы не выдать
+      const cands = ids.filter((id) => !statusOf(id)).sort((a, b) => wordFor(b).ts - wordFor(a).ts);
+      const fix = cands.find((id) => !ids.includes(wordFor(id).by)) || cands[0] || null;
+      out.push({ ids: seen, fix });
+    }
+    return out;
+  }
+  function dupInfo(pid, groups) {
+    const g = groups.find((x) => x.ids.includes(pid));
+    return g ? { others: g.ids.filter((id) => id !== pid), fix: g.fix === pid } : null;
+  }
+
   // ---------- actions ----------
   function fail(msg) { ui.error = msg; ui.busy = false; render(); }
   function clearSession() { session = null; ls.del('bmzk:session'); }
@@ -350,7 +393,7 @@
     const assign = {};
     cyc.forEach((id, i) => { assign[id] = st.mode === 'prev' ? cyc[(i - 1 + n) % n] : cyc[(i + 1) % n]; });
     const round = (st.round || 0) + 1;
-    ui.editingWord = false; ui.filling = null; drafts.word = '';
+    ui.editingWord = false; ui.filling = null; ui.wordError = ''; drafts.word = '';
     publish('state', { ...st, phase: 'game', round, assign, order: ordered().map((p) => p.id), hostId: st.hostId || me() });
     publish('turn', { round, pid: ids[0] });
   }
@@ -368,6 +411,9 @@
     const word = String(drafts.word || '').trim().slice(0, 60);
     if (!target) return;
     if (!word) return toast('Напиши слово');
+    const dup = visibleDup(word, target);
+    if (dup) { ui.wordError = `«${word}» уже загадано для ${nameOf(dup)} — придумай другое`; render(); return; }
+    ui.wordError = '';
     publish('w/' + target, { round: gstate().round, word, by: me() });
     ui.editingWord = false; drafts.word = '';
   }
@@ -376,6 +422,8 @@
     const word = String(drafts['fill-' + pid] || '').trim().slice(0, 60);
     if (!word) return toast('Напиши слово');
     if (pid === me()) return;
+    const dup = visibleDup(word, pid);
+    if (dup) return toast(`«${word}» уже загадано для ${nameOf(dup)} — придумай другое`);
     publish('w/' + pid, { round: gstate().round, word, by: me() });
     ui.filling = null; drafts['fill-' + pid] = '';
   }
@@ -445,9 +493,9 @@
     start: startRound,
     lobby: toLobby,
     word: submitWord,
-    editWord: () => { const t = (gstate().assign || {})[me()]; const w = t && wordFor(t); drafts.word = w ? w.word : ''; ui.editingWord = true; render(); focusSoon('word'); },
-    cancelEdit: () => { ui.editingWord = false; render(); },
-    fill: (el) => { ui.filling = el.dataset.pid; render(); focusSoon('fill-' + el.dataset.pid); },
+    editWord: () => { const t = (gstate().assign || {})[me()]; const w = t && wordFor(t); drafts.word = w ? w.word : ''; ui.editingWord = true; ui.wordError = ''; render(); focusSoon('word'); },
+    cancelEdit: () => { ui.editingWord = false; ui.wordError = ''; render(); },
+    fill: (el) => { ui.filling = el.dataset.pid; drafts['fill-' + el.dataset.pid] = ''; render(); focusSoon('fill-' + el.dataset.pid); },
     fillSave: (el) => saveFill(el.dataset.pid),
     fillCancel: () => { ui.filling = null; render(); },
     guessed: (el) => setResult(el.dataset.pid, 'guessed'),
@@ -576,7 +624,11 @@
     } else {
       const w = wordFor(target);
       const tn = esc(nameOf(target));
-      if (w && !ui.editingWord) {
+      const dup = w && dupInfo(target, dupGroups());
+      if (w && !ui.editingWord && dup && dup.fix) {
+        body = `<p class="dupwarn">⚠️ Твоё слово для <b>${tn}</b> — <span class="chip">${esc(w.word)}</span> — совпало со словом у ${dup.others.map((id) => `<b>${esc(nameOf(id))}</b>`).join(', ')}. Поменяй, пожалуйста.</p>
+          <button class="primary" data-act="editWord">Поменять слово</button>`;
+      } else if (w && !ui.editingWord) {
         const locked = !!statusOf(target);
         body = `<div class="row between">
           <p>Ты загадал(а) для <b>${tn}</b>: <span class="chip">${esc(w.word)}</span>${w.by !== me() ? ` <span class="muted small">(вписал(а) ${esc(nameOf(w.by))})</span>` : ''}</p>
@@ -589,6 +641,7 @@
             <button class="primary" data-act="word">${w ? 'Сохранить' : 'Загадать'}</button>
             ${w ? '<button class="ghost" data-act="cancelEdit">Отмена</button>' : ''}
           </div>
+          ${ui.wordError ? `<p class="err">${esc(ui.wordError)}</p>` : ''}
           <p class="muted small">${tn} не увидит слово, остальные — увидят.</p>`;
       }
     }
@@ -641,23 +694,25 @@
       </section>`];
   }
 
-  function viewCard(p) {
+  function viewCard(p, groups) {
     const isMe = p.id === me();
     const w = wordFor(p.id);
     const s = statusOf(p.id);
     const t = turnPid();
     const setter = setterOf(p.id);
+    const filling = ui.filling === p.id && !isMe;
+    const dup = !isMe && w ? dupInfo(p.id, groups) : null;
     let sticky, meta = '', acts = '';
 
     if (isMe && !s) {
       sticky = `<div class="sticky hidden"><span class="q">❓</span>${w ? 'Это ты. Угадывай!' : 'Тебе загадывают…'}</div>`;
-    } else if (w) {
-      sticky = `<div class="sticky ${isMe ? 'mine-revealed' : ''}">${esc(w.word)}</div>`;
-    } else if (ui.filling === p.id && !isMe) {
+    } else if (filling) {
       sticky = `<div class="sticky hidden" style="gap:8px">
-        <input id="fill-${p.id}" maxlength="60" autocomplete="off" placeholder="Слово для ${esc(p.name)}" data-enter="fillSave" data-pid="${p.id}">
+        <input id="fill-${p.id}" maxlength="60" autocomplete="off" placeholder="${w ? 'Новое слово' : 'Слово'} для ${esc(p.name)}" data-enter="fillSave" data-pid="${p.id}">
         <div class="row" style="width:100%"><button class="small primary grow" data-act="fillSave" data-pid="${p.id}">Ок</button><button class="small ghost" data-act="fillCancel">✕</button></div>
       </div>`;
+    } else if (w) {
+      sticky = `<div class="sticky ${isMe ? 'mine-revealed' : ''}">${esc(w.word)}</div>`;
     } else {
       const who = setter && pById(setter) ? (setter === me() ? 'тебя ↑' : esc(nameOf(setter))) : null;
       sticky = `<div class="sticky hidden">${who ? `Ждём слово от ${who}…` : 'Слова пока нет'}</div>`;
@@ -665,8 +720,13 @@
 
     if (w && !(isMe && !s)) meta = `загадал(а): ${esc(w.by === me() ? 'ты' : nameOf(w.by))}`;
     else if (w && isMe) meta = `загадал(а): ${esc(nameOf(w.by))}`;
+    if (dup) meta += `<div class="dupwarn">⚠️ Такое же слово у ${dup.others.map((id) => esc(nameOf(id))).join(', ')}${dup.fix && !s ? ' — это стоит поменять' : ''}</div>`;
 
-    if (s) {
+    if (filling) {
+      acts = '';
+    } else if (dup && dup.fix && !s) {
+      acts = `<button class="small" data-act="fill" data-pid="${p.id}">✍️ Поменять слово</button>`;
+    } else if (s) {
       const badge = s.result === 'guessed' ? `<span class="badge win">🏆 ${rankOf(p.id)} место</span>` : '<span class="badge">🏳️ сдался(ась)</span>';
       acts = `${badge}${isMe || amHost() ? `<button class="small ghost" data-act="undo" data-pid="${p.id}" title="Отменить">↺</button>` : ''}`;
     } else if (w) {
@@ -687,7 +747,8 @@
   }
 
   function viewBoard() {
-    return ['board', `<div class="board">${ordered().map(viewCard).join('')}</div>`];
+    const groups = dupGroups();
+    return ['board', `<div class="board">${ordered().map((p) => viewCard(p, groups)).join('')}</div>`];
   }
 
   function viewNotes() {
